@@ -407,45 +407,16 @@ const LoanManagement: React.FC = () => {
       )
     },
     {
-      title: '联系电话',
-      dataIndex: 'phone',
-      key: 'phone',
-      width: 120,
-      render: (phone: string) => phone || '-'
-    },
-    {
-      title: '净额',
+      title: '未平账金额',
       dataIndex: 'netAmount',
       key: 'netAmount',
       width: 120,
       render: (amount: number) => (
         <Text type={amount > 0 ? 'success' : amount < 0 ? 'danger' : 'secondary'} strong>
-          {amount > 0 ? '+' : ''}¥{amount.toLocaleString()}
+          {amount > 0 ? '+' : amount < 0 ? '-' : ''}¥{Math.abs(amount).toLocaleString()}
         </Text>
       ),
-      sorter: (a, b) => b.netAmount - a.netAmount
-    },
-    {
-      title: '我欠对方',
-      dataIndex: 'activeBorrowedAmount',
-      key: 'activeBorrowedAmount',
-      width: 120,
-      render: (amount: number) => (
-        <Text type={amount > 0 ? 'danger' : 'secondary'}>
-          ¥{amount.toLocaleString()}
-        </Text>
-      )
-    },
-    {
-      title: '对方欠我',
-      dataIndex: 'activeLentAmount',
-      key: 'activeLentAmount',
-      width: 120,
-      render: (amount: number) => (
-        <Text type={amount > 0 ? 'success' : 'secondary'}>
-          ¥{amount.toLocaleString()}
-        </Text>
-      )
+      sorter: (a, b) => Math.abs(b.netAmount) - Math.abs(a.netAmount)
     },
     {
       title: '最后交易',
@@ -473,16 +444,7 @@ const LoanManagement: React.FC = () => {
           >
             新增往来
           </Button>
-          {record.activeBorrowedAmount > 0 && (
-            <Button
-              type="link"
-              size="small"
-              icon={<TeamOutlined />}
-              onClick={() => handleBatchRepayment(record.counterparty)}
-            >
-              批量还款
-            </Button>
-          )}
+          {/* 批量还款入口移除 */}
         </Space>
       )
     }
@@ -508,28 +470,11 @@ const LoanManagement: React.FC = () => {
       width: 120
     },
     {
-      title: '电话',
-      dataIndex: 'counterpartyPhone',
-      key: 'counterpartyPhone',
-      width: 120
-    },
-    {
       title: '借贷金额',
       dataIndex: 'amount',
       key: 'amount',
       width: 120,
       render: (amount: number) => `¥${amount.toLocaleString()}`
-    },
-    {
-      title: '剩余金额',
-      dataIndex: 'remainingAmount',
-      key: 'remainingAmount',
-      width: 120,
-      render: (amount: number) => (
-        <Text type={amount > 0 ? 'danger' : 'success'}>
-          ¥{amount.toLocaleString()}
-        </Text>
-      )
     },
     {
       title: '借贷日期',
@@ -543,17 +488,6 @@ const LoanManagement: React.FC = () => {
       key: 'dueDate',
       width: 120,
       render: (date: string) => date || '-'
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 80,
-      render: (status: string) => (
-        <Tag color={status === 'active' ? 'orange' : 'green'}>
-          {status === 'active' ? '未结清' : '已结清'}
-        </Tag>
-      )
     },
     {
       title: '说明',
@@ -584,16 +518,7 @@ const LoanManagement: React.FC = () => {
           >
             编辑
           </Button>
-          {record.status === 'active' && (
-            <Button
-              type="link"
-              size="small"
-              icon={record.type === 'borrow' ? <PayCircleOutlined /> : <MoneyCollectOutlined />}
-              onClick={() => handleRepayment(record)}
-            >
-              {record.type === 'borrow' ? '还款' : '收款'}
-            </Button>
-          )}
+          {/* 子列表不提供收款/还款操作，统一通过新增往来记录管理 */}
           <Popconfirm
             title="确定要删除这条记录吗？"
             onConfirm={() => handleDelete(record.id)}
@@ -631,35 +556,7 @@ const LoanManagement: React.FC = () => {
             />
             <div style={{ marginTop: 8 }}>
               <Text type="secondary">共 {debtSummary.myDebts.records.length} 笔未结清</Text>
-              {debtSummary.myDebts.records.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  {/* 按对方分组显示批量还款按钮 */}
-                  {Object.entries(
-                    debtSummary.myDebts.records.reduce((acc, record) => {
-                      if (!acc[record.counterparty]) {
-                        acc[record.counterparty] = [];
-                      }
-                      acc[record.counterparty].push(record);
-                      return acc;
-                    }, {} as Record<string, any[]>)
-                  ).map(([counterparty, records]) => (
-                    <div key={counterparty} style={{ marginBottom: 4 }}>
-                      <Text type="secondary" style={{ fontSize: '12px' }}>
-                        欠 {counterparty}: ¥{records.reduce((sum, r) => sum + r.remainingAmount, 0)}
-                      </Text>
-                      <Button
-                        type="link"
-                        size="small"
-                        icon={<TeamOutlined />}
-                        onClick={() => handleBatchRepayment(counterparty)}
-                        style={{ marginLeft: 8, padding: 0, height: 'auto' }}
-                      >
-                        批量还款
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* 统计区域简化：移除批量还款入口，仅显示统计数字与未结清笔数 */}
             </div>
           </Card>
         </Col>
@@ -697,9 +594,6 @@ const LoanManagement: React.FC = () => {
               
               return (
                 <div style={{ margin: 0 }}>
-                  <Title level={5} style={{ marginBottom: 16 }}>
-                    与 {record.counterparty} 的往来明细
-                  </Title>
                   <Table
                     columns={detailColumns}
                     dataSource={allRecords}
