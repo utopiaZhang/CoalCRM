@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Table, 
   Button, 
@@ -12,38 +12,26 @@ import {
   Tag
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Driver } from '../types';
+import { driversService, DriverSummary } from '../services/drivers';
 
 const DriverManagement: React.FC = () => {
-  const [drivers, setDrivers] = useState<Driver[]>([
-    {
-      id: '1',
-      name: '张师傅',
-      phone: '13700137001',
-      plateNumber: '京A12345',
-      teamName: '顺达车队',
-      createdAt: '2024-01-01'
-    },
-    {
-      id: '2',
-      name: '李师傅',
-      phone: '13700137002',
-      plateNumber: '京B67890',
-      teamName: '快运车队',
-      createdAt: '2024-01-02'
-    },
-    {
-      id: '3',
-      name: '王师傅',
-      phone: '13700137003',
-      plateNumber: '津C11111',
-      createdAt: '2024-01-03'
-    }
-  ]);
+  const [drivers, setDrivers] = useState<DriverSummary[]>([]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
+  const [editingDriver, setEditingDriver] = useState<DriverSummary | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await driversService.list();
+        setDrivers(list);
+      } catch (e) {
+        console.error(e);
+        message.error('加载司机列表失败');
+      }
+    })();
+  }, []);
 
   const columns = [
     {
@@ -58,10 +46,14 @@ const DriverManagement: React.FC = () => {
     },
     {
       title: '车牌号',
-      dataIndex: 'plateNumber',
-      key: 'plateNumber',
-      render: (plateNumber: string) => (
-        <Tag color="blue">{plateNumber}</Tag>
+      dataIndex: 'plateNumbers',
+      key: 'plateNumbers',
+      render: (plateNumbers: string[]) => (
+        <div>
+          {(plateNumbers || []).map(p => (
+            <Tag key={p} color="blue">{p}</Tag>
+          ))}
+        </div>
       )
     },
     {
@@ -80,7 +72,7 @@ const DriverManagement: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: Driver) => (
+      render: (_: any, record: DriverSummary) => (
         <Space size="middle">
           <Button 
             type="link" 
@@ -110,40 +102,51 @@ const DriverManagement: React.FC = () => {
     setIsModalVisible(true);
   };
 
-  const handleEdit = (driver: Driver) => {
+  const handleEdit = (driver: DriverSummary) => {
     setEditingDriver(driver);
-    form.setFieldsValue(driver);
+    form.setFieldsValue({
+      name: driver.name,
+      phone: driver.phone,
+      teamName: driver.teamName || '',
+      plateNumbers: (driver.plateNumbers || []).join(', ')
+    });
     setIsModalVisible(true);
   };
 
-  const handleDelete = (id: string) => {
-    setDrivers(drivers.filter(driver => driver.id !== id));
-    message.success('司机删除成功');
+  const handleDelete = async (id: string) => {
+    try {
+      await driversService.remove(id);
+      setDrivers(drivers.filter(driver => driver.id !== id));
+      message.success('司机删除成功');
+    } catch (e) {
+      console.error(e);
+      message.error('司机删除失败');
+    }
   };
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
-      
+      const payload = {
+        name: values.name,
+        phone: values.phone || '',
+        teamName: values.teamName || '',
+        plateNumbers: (values.plateNumbers || '')
+          .split(',')
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0)
+      };
+
       if (editingDriver) {
-        // 编辑司机
-        setDrivers(drivers.map(driver => 
-          driver.id === editingDriver.id 
-            ? { ...driver, ...values }
-            : driver
-        ));
+        const updated = await driversService.update(editingDriver.id, payload);
+        setDrivers(drivers.map(d => (d.id === editingDriver.id ? updated : d)));
         message.success('司机信息更新成功');
       } else {
-        // 新增司机
-        const newDriver: Driver = {
-          id: Date.now().toString(),
-          ...values,
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-        setDrivers([...drivers, newDriver]);
+        const created = await driversService.create(payload);
+        setDrivers([created, ...drivers]);
         message.success('司机添加成功');
       }
-      
+
       setIsModalVisible(false);
       form.resetFields();
     } catch (error) {
@@ -223,14 +226,11 @@ const DriverManagement: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            name="plateNumber"
-            label="车牌号"
-            rules={[
-              { required: true, message: '请输入车牌号' },
-              { pattern: /^[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-Z0-9]{5}$/, message: '请输入正确的车牌号' }
-            ]}
+            name="plateNumbers"
+            label="车牌号（多个用逗号分隔）"
+            rules={[{ required: true, message: '请输入至少一个车牌号' }]}
           >
-            <Input placeholder="请输入车牌号，如：京A12345" />
+            <Input placeholder="例如：京A12345, 京B67890" />
           </Form.Item>
 
           <Form.Item

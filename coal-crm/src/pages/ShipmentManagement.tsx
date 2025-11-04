@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Table, 
   Button, 
@@ -17,54 +17,16 @@ import {
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { Shipment } from '../types';
+import { shipmentsService } from '../services/shipments';
+import { customersService } from '../services/customers';
+import { suppliersService } from '../services/suppliers';
+import { batchesService } from '../services/batches';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
 
 const ShipmentManagement: React.FC = () => {
-  const [shipments, setShipments] = useState<Shipment[]>([
-    {
-      id: '1',
-      batchId: 'batch-1',
-      vehicleId: 'vehicle-1',
-      plateNumber: '京A12345',
-      driverName: '张师傅',
-      driverId: 'driver-1',
-      customerId: '1',
-      customerName: '北京钢铁厂',
-      supplierId: '1',
-      supplierName: '山西煤业集团',
-      coalPrice: 800,
-      freightPrice: 120,
-      weight: 30,
-      coalAmount: 24000,
-      freightAmount: 3600,
-      departureDate: '2024-01-15',
-      arrivalDate: '2024-01-17',
-      status: 'completed',
-      createdAt: '2024-01-14'
-    },
-    {
-      id: '2',
-      batchId: 'batch-2',
-      vehicleId: 'vehicle-2',
-      plateNumber: '津B67890',
-      driverName: '李师傅',
-      driverId: 'driver-2',
-      customerId: '2',
-      customerName: '天津化工厂',
-      supplierId: '2',
-      supplierName: '内蒙古能源公司',
-      coalPrice: 750,
-      freightPrice: 100,
-      weight: 25,
-      coalAmount: 18750,
-      freightAmount: 2500,
-      departureDate: '2024-01-16',
-      status: 'shipping',
-      createdAt: '2024-01-15'
-    }
-  ]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isDetailVisible, setIsDetailVisible] = useState(false);
@@ -72,18 +34,27 @@ const ShipmentManagement: React.FC = () => {
   const [viewingShipment, setViewingShipment] = useState<Shipment | null>(null);
   const [form] = Form.useForm();
 
-  // 模拟客户和供货方数据
-  const customers = [
-    { id: '1', name: '北京钢铁厂' },
-    { id: '2', name: '天津化工厂' },
-    { id: '3', name: '河北电厂' }
-  ];
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
-  const suppliers = [
-    { id: '1', name: '山西煤业集团' },
-    { id: '2', name: '内蒙古能源公司' },
-    { id: '3', name: '陕西煤炭集团' }
-  ];
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [shipmentList, customerList, supplierList] = await Promise.all([
+          shipmentsService.list(),
+          customersService.list(),
+          suppliersService.list()
+        ]);
+        setShipments(shipmentList);
+        setCustomers(customerList.map(c => ({ id: c.id, name: c.name })));
+        setSuppliers(supplierList.map(s => ({ id: s.id, name: s.name })));
+      } catch (err) {
+        console.error(err);
+        message.error('加载车单数据失败');
+      }
+    };
+    load();
+  }, []);
 
   const columns = [
     {
@@ -164,23 +135,14 @@ const ShipmentManagement: React.FC = () => {
           >
             查看
           </Button>
-          <Button 
-            type="link" 
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
+          {/* 编辑暂不支持（车单为派生数据），请在发货记录中调整 */}
+          <Button type="link" icon={<EditOutlined />} disabled>
             编辑
           </Button>
-          <Popconfirm
-            title="确定要删除这个车单吗？"
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button type="link" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
+          {/* 删除暂不支持（需删除车辆/批次），请在发货记录中删除 */}
+          <Button type="link" danger icon={<DeleteOutlined />} disabled>
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -207,50 +169,32 @@ const ShipmentManagement: React.FC = () => {
     setIsDetailVisible(true);
   };
 
-  const handleDelete = (id: string) => {
-    setShipments(shipments.filter(shipment => shipment.id !== id));
-    message.success('车单删除成功');
-  };
+  // 删除不支持，保留占位
+  const handleDelete = (_id: string) => {};
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
+      // 通过创建发货批次（仅一个车辆）来生成车单
       const customerName = customers.find(c => c.id === values.customerId)?.name || '';
       const supplierName = suppliers.find(s => s.id === values.supplierId)?.name || '';
-      
-      const formattedValues = {
-        ...values,
-        departureDate: values.departureDate.format('YYYY-MM-DD'),
-        arrivalDate: values.expectedArrivalDate ? values.expectedArrivalDate.format('YYYY-MM-DD') : undefined,
+      await batchesService.create({
+        customerId: values.customerId,
         customerName,
+        supplierId: values.supplierId,
         supplierName,
-        coalAmount: values.weight * values.coalPrice, // 计算煤款
-        freightAmount: values.weight * values.freightPrice, // 计算运费
-        batchId: `batch-${Date.now()}`, // 生成批次ID
-        vehicleId: `vehicle-${Date.now()}`, // 生成车辆ID
-        driverId: `driver-${Date.now()}`, // 生成司机ID
-      };
-      
-      if (editingShipment) {
-        // 编辑车单
-        setShipments(shipments.map(shipment => 
-          shipment.id === editingShipment.id 
-            ? { ...shipment, ...formattedValues }
-            : shipment
-        ));
-        message.success('车单信息更新成功');
-      } else {
-        // 新增车单
-        const newShipment: Shipment = {
-          id: Date.now().toString(),
-          ...formattedValues,
-          status: 'shipping',
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-        setShipments([...shipments, newShipment]);
-        message.success('车单创建成功');
-      }
-      
+        departureDate: values.departureDate.format('YYYY-MM-DD'),
+        coalPrice: Number(values.coalPrice) || 0,
+        vehicles: [{
+          plateNumber: values.plateNumber,
+          driverName: values.driverName || '',
+          weight: Number(values.weight) || 0,
+          amount: (Number(values.weight) || 0) * (Number(values.coalPrice) || 0)
+        }]
+      });
+      const list = await shipmentsService.list();
+      setShipments(list);
+      message.success('车单创建成功');
       setIsModalVisible(false);
       form.resetFields();
     } catch (error) {

@@ -21,6 +21,9 @@ import {
 import { PlusOutlined, EditOutlined, DeleteOutlined, DollarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { DeliveryBatch, DeliveryVehicle, BatchPaymentRecord, Customer, Supplier } from '../types';
+import { customersService } from '../services/customers';
+import { suppliersService } from '../services/suppliers';
+import { batchesService } from '../services/batches';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -38,46 +41,24 @@ const DeliveryRecords: React.FC = () => {
   const [form] = Form.useForm();
   const [paymentForm] = Form.useForm();
 
-  // 模拟数据
+  // 加载后端数据
   useEffect(() => {
-    const mockCustomers: Customer[] = [
-      { id: '1', name: '华能电厂', contact: '张经理', phone: '13800138001', address: '北京市朝阳区', createdAt: '2024-01-01' },
-      { id: '2', name: '大唐电厂', contact: '李经理', phone: '13800138002', address: '天津市河西区', createdAt: '2024-01-02' },
-    ];
-
-    const mockSuppliers: Supplier[] = [
-      { id: '1', name: '山西煤业', contact: '王总', phone: '13900139001', address: '山西省太原市', createdAt: '2024-01-01' },
-      { id: '2', name: '内蒙古煤炭', contact: '赵总', phone: '13900139002', address: '内蒙古呼和浩特市', createdAt: '2024-01-02' },
-    ];
-
-    const mockBatches: DeliveryBatch[] = [
-      {
-        id: '1',
-        customerId: '1',
-        customerName: '华能电厂',
-        supplierId: '1',
-        supplierName: '山西煤业',
-        departureDate: '2024-01-15',
-        coalPrice: 800,
-        vehicles: [
-          { id: 'v1', batchId: '1', plateNumber: '京A12345', driverName: '张师傅', weight: 35, amount: 28000, createdAt: '2024-01-15' },
-          { id: 'v2', batchId: '1', plateNumber: '京B67890', driverName: '李师傅', weight: 40, amount: 32000, createdAt: '2024-01-15' },
-        ],
-        totalWeight: 75,
-        totalAmount: 60000,
-        paidAmount: 40000,
-        remainingAmount: 20000,
-        paymentRecords: [
-          { id: 'p1', batchId: '1', amount: 40000, paymentDate: '2024-01-15', remark: '首付款', createdAt: '2024-01-15' }
-        ],
-        status: 'partial_paid',
-        createdAt: '2024-01-15'
+    const load = async () => {
+      try {
+        const [customers, suppliers, batches] = await Promise.all([
+          customersService.list(),
+          suppliersService.list(),
+          batchesService.list()
+        ]);
+        setCustomers(customers);
+        setSuppliers(suppliers);
+        setBatches(batches);
+      } catch (err) {
+        console.error(err);
+        message.error('加载发货记录数据失败');
       }
-    ];
-
-    setCustomers(mockCustomers);
-    setSuppliers(mockSuppliers);
-    setBatches(mockBatches);
+    };
+    load();
   }, []);
 
   // 发货批次表格列定义
@@ -166,11 +147,8 @@ const DeliveryRecords: React.FC = () => {
       width: 200,
       render: (_, record) => (
         <Space size="small">
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
+          {/* 编辑功能暂未与后端同步，后续补充 */}
+          <Button type="link" icon={<EditOutlined />} disabled>
             编辑
           </Button>
           <Button
@@ -250,9 +228,16 @@ const DeliveryRecords: React.FC = () => {
     setIsModalVisible(true);
   };
 
-  const handleDelete = (id: string) => {
-    setBatches(batches.filter(batch => batch.id !== id));
-    message.success('删除成功');
+  const handleDelete = async (id: string) => {
+    try {
+      await batchesService.remove(id);
+      const list = await batchesService.list();
+      setBatches(list);
+      message.success('删除成功');
+    } catch (err) {
+      console.error(err);
+      message.error('删除失败');
+    }
   };
 
   const handlePayment = (batch: DeliveryBatch) => {
@@ -264,84 +249,26 @@ const DeliveryRecords: React.FC = () => {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
-      const vehicles = values.vehicles || [];
-      
-      // 计算总重量和总金额
-      const totalWeight = vehicles.reduce((sum: number, v: any) => sum + (v.weight || 0), 0);
-      const totalAmount = totalWeight * values.coalPrice;
+      const vehicles = (values.vehicles || []).map((v: any) => ({
+        plateNumber: v.plateNumber,
+        driverName: v.driverName || '',
+        weight: Number(v.weight) || 0,
+        amount: (Number(v.weight) || 0) * (Number(values.coalPrice) || 0)
+      }));
 
-      const batchId = editingBatch?.id || Date.now().toString();
-      const newBatch: DeliveryBatch = {
-        id: batchId,
+      await batchesService.create({
         customerId: values.customerId,
         customerName: customers.find(c => c.id === values.customerId)?.name || '',
         supplierId: values.supplierId,
         supplierName: suppliers.find(s => s.id === values.supplierId)?.name || '',
         departureDate: values.departureDate.format('YYYY-MM-DD'),
-        coalPrice: values.coalPrice,
-        vehicles: vehicles.map((v: any, index: number) => ({
-          id: `v${Date.now()}_${index}`,
-          batchId: batchId,
-          plateNumber: v.plateNumber,
-          driverName: v.driverName,
-          weight: v.weight,
-          amount: v.weight * values.coalPrice,
-          createdAt: new Date().toISOString(),
-        })),
-        totalWeight,
-        totalAmount,
-        paidAmount: values.paidAmount || 0,
-        remainingAmount: totalAmount - (values.paidAmount || 0),
-        paymentRecords: values.paidAmount > 0 ? [{
-          id: `p${Date.now()}`,
-          batchId: batchId,
-          amount: values.paidAmount,
-          paymentDate: new Date().toISOString().split('T')[0],
-          remark: values.paymentRemark || '发货时付款',
-          createdAt: new Date().toISOString(),
-        }] : [],
-        status: values.paidAmount >= totalAmount ? 'fully_paid' : 
-                values.paidAmount > 0 ? 'partial_paid' : 'pending',
-        createdAt: editingBatch?.createdAt || new Date().toISOString(),
-      };
+        coalPrice: Number(values.coalPrice) || 0,
+        vehicles
+      });
 
-      // 自动生成车单记录
-      if (!editingBatch) { // 只在新增时生成车单
-        const newShipments = vehicles.map((v: any, index: number) => ({
-          id: `s${Date.now()}_${index}`,
-          batchId: batchId,
-          vehicleId: `v${Date.now()}_${index}`,
-          plateNumber: v.plateNumber,
-          driverName: v.driverName || '未知司机',
-          driverId: `driver_${Date.now()}_${index}`,
-          customerId: values.customerId,
-          customerName: customers.find(c => c.id === values.customerId)?.name || '',
-          supplierId: values.supplierId,
-          supplierName: suppliers.find(s => s.id === values.supplierId)?.name || '',
-          coalPrice: values.coalPrice,
-          freightPrice: 0, // 运费暂时设为0，后续可以在车单管理中修改
-          weight: v.weight,
-          coalAmount: v.weight * values.coalPrice,
-          freightAmount: 0,
-          departureDate: values.departureDate.format('YYYY-MM-DD'),
-          status: 'shipping' as const,
-          createdAt: new Date().toISOString(),
-        }));
-
-        // 这里应该调用API将车单数据保存到后端
-        // 目前只是在控制台输出，实际应用中需要调用相应的API
-        console.log('自动生成的车单记录:', newShipments);
-        message.success(`发货批次创建成功，已自动生成${newShipments.length}条车单记录`);
-      }
-
-      if (editingBatch) {
-        setBatches(batches.map(batch => batch.id === editingBatch.id ? newBatch : batch));
-        message.success('修改成功');
-      } else {
-        setBatches([...batches, newBatch]);
-        message.success('添加成功');
-      }
-
+      const list = await batchesService.list();
+      setBatches(list);
+      message.success(`发货批次创建成功，已自动生成${vehicles.length}条车单记录`);
       setIsModalVisible(false);
     } catch (error) {
       console.error('表单验证失败:', error);
@@ -352,25 +279,13 @@ const DeliveryRecords: React.FC = () => {
     try {
       const values = await paymentForm.validateFields();
       if (!selectedBatch) return;
-
-      const newPaymentRecord: BatchPaymentRecord = {
-        id: `p${Date.now()}`,
-        batchId: selectedBatch.id,
-        amount: values.amount,
+      await batchesService.addPayment(selectedBatch.id, {
+        amount: Number(values.amount) || 0,
         paymentDate: values.paymentDate.format('YYYY-MM-DD'),
-        remark: values.remark,
-        createdAt: new Date().toISOString(),
-      };
-
-      const updatedBatch: DeliveryBatch = {
-        ...selectedBatch,
-        paidAmount: selectedBatch.paidAmount + values.amount,
-        remainingAmount: selectedBatch.remainingAmount - values.amount,
-        paymentRecords: [...selectedBatch.paymentRecords, newPaymentRecord],
-        status: (selectedBatch.remainingAmount - values.amount) <= 0 ? 'fully_paid' : 'partial_paid',
-      };
-
-      setBatches(batches.map(batch => batch.id === selectedBatch.id ? updatedBatch : batch));
+        remark: values.remark
+      });
+      const list = await batchesService.list();
+      setBatches(list);
       setIsPaymentModalVisible(false);
       message.success('付款记录添加成功');
     } catch (error) {

@@ -36,13 +36,21 @@ async function initStorage() {
       db = new Database(dbFile);
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
-      db.exec(`
+  db.exec(`
         CREATE TABLE IF NOT EXISTS customers (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           contact TEXT,
           phone TEXT,
           address TEXT,
+          createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS drivers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          phone TEXT,
+          teamName TEXT,
+          plateNumbers TEXT,
           createdAt TEXT
         );
         CREATE TABLE IF NOT EXISTS suppliers (
@@ -163,6 +171,7 @@ async function initJsonStore() {
   if (!fs.existsSync(storeFile)) {
     const initial = {
       customers: [],
+      drivers: [],
       suppliers: [],
       delivery_batches: [],
       delivery_vehicles: [],
@@ -300,6 +309,135 @@ app.delete('/api/suppliers/:id', (req, res) => {
     const before = store.suppliers.length;
     store.suppliers = store.suppliers.filter(s => s.id !== id);
     if (store.suppliers.length === before) return res.status(404).json({ error: 'not found' });
+    saveStore();
+  }
+  res.status(204).send();
+});
+
+// Drivers CRUD with fallback to aggregated list when empty
+app.get('/api/drivers', (req, res) => {
+  if (db) {
+    const rows = db.prepare('SELECT * FROM drivers ORDER BY createdAt DESC').all();
+    if (rows.length > 0) {
+      const parsed = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        phone: r.phone || '',
+        teamName: r.teamName || '',
+        plateNumbers: (() => { try { return JSON.parse(r.plateNumbers || '[]'); } catch { return []; } })(),
+        createdAt: r.createdAt
+      }));
+      return res.json(parsed);
+    }
+    // Fallback to aggregate from delivery_vehicles
+    const vehs = db.prepare('SELECT plateNumber, driverName, createdAt FROM delivery_vehicles').all();
+    const map = new Map();
+    for (const v of vehs) {
+      const name = v.driverName || '未知司机';
+      const id = 'drv_' + Buffer.from(String(name)).toString('hex').slice(0, 8);
+      const plate = v.plateNumber || '';
+      if (!map.has(id)) {
+        map.set(id, { id, name, phone: '', teamName: '', plateNumbers: [], createdAt: v.createdAt || new Date().toISOString().split('T')[0] });
+      }
+      const entry = map.get(id);
+      if (plate && !entry.plateNumbers.includes(plate)) entry.plateNumbers.push(plate);
+    }
+    return res.json(Array.from(map.values()));
+  }
+  const rows = [...(store.drivers || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  if (rows.length > 0) return res.json(rows);
+  // Fallback aggregate from JSON delivery_vehicles
+  const aggregate = (rows2) => {
+    const map = new Map();
+    for (const v of rows2) {
+      const name = v.driverName || '未知司机';
+      const id = 'drv_' + Buffer.from(String(name)).toString('hex').slice(0, 8);
+      const plate = v.plateNumber || '';
+      if (!map.has(id)) {
+        map.set(id, { id, name, phone: '', teamName: '', plateNumbers: [], createdAt: v.createdAt || new Date().toISOString().split('T')[0] });
+      }
+      const entry = map.get(id);
+      if (plate && !entry.plateNumbers.includes(plate)) entry.plateNumbers.push(plate);
+    }
+    return Array.from(map.values());
+  };
+  return res.json(aggregate(store.delivery_vehicles || []));
+});
+
+app.post('/api/drivers', (req, res) => {
+  const id = `drv${Date.now()}`;
+  const { name, phone = '', teamName = '', plateNumbers = [] } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const createdAt = new Date().toISOString().split('T')[0];
+  const payload = {
+    id,
+    name,
+    phone,
+    teamName,
+    plateNumbers: Array.isArray(plateNumbers) ? plateNumbers : [],
+    createdAt
+  };
+  if (db) {
+    db.prepare('INSERT INTO drivers (id, name, phone, teamName, plateNumbers, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, name, phone, teamName, JSON.stringify(payload.plateNumbers), createdAt);
+  } else {
+    if (!store.drivers) store.drivers = [];
+    store.drivers.push(payload);
+    saveStore();
+  }
+  res.status(201).json(payload);
+});
+
+app.put('/api/drivers/:id', (req, res) => {
+  const { id } = req.params;
+  if (db) {
+    const existing = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const updated = {
+      name: req.body?.name ?? existing.name,
+      phone: req.body?.phone ?? existing.phone,
+      teamName: req.body?.teamName ?? existing.teamName,
+      plateNumbers: Array.isArray(req.body?.plateNumbers)
+        ? JSON.stringify(req.body.plateNumbers)
+        : existing.plateNumbers,
+      createdAt: existing.createdAt
+    };
+    db.prepare('UPDATE drivers SET name = ?, phone = ?, teamName = ?, plateNumbers = ? WHERE id = ?')
+      .run(updated.name, updated.phone, updated.teamName, updated.plateNumbers, id);
+    const row = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+    return res.json({
+      id,
+      name: row.name,
+      phone: row.phone || '',
+      teamName: row.teamName || '',
+      plateNumbers: (() => { try { return JSON.parse(row.plateNumbers || '[]'); } catch { return []; } })(),
+      createdAt: row.createdAt
+    });
+  }
+  const idx = (store.drivers || []).findIndex(d => d.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  const existing = store.drivers[idx];
+  const updated = {
+    ...existing,
+    name: req.body?.name ?? existing.name,
+    phone: req.body?.phone ?? existing.phone,
+    teamName: req.body?.teamName ?? existing.teamName,
+    plateNumbers: Array.isArray(req.body?.plateNumbers) ? req.body.plateNumbers : existing.plateNumbers
+  };
+  store.drivers[idx] = updated;
+  saveStore();
+  res.json(updated);
+});
+
+app.delete('/api/drivers/:id', (req, res) => {
+  const { id } = req.params;
+  if (db) {
+    const info = db.prepare('DELETE FROM drivers WHERE id = ?').run(id);
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' });
+  } else {
+    const before = (store.drivers || []).length;
+    store.drivers = (store.drivers || []).filter(d => d.id !== id);
+    if (before === (store.drivers || []).length) return res.status(404).json({ error: 'not found' });
     saveStore();
   }
   res.status(204).send();
@@ -525,29 +663,7 @@ app.delete('/api/batches/:id', (req, res) => {
   res.status(204).send();
 });
 
-// Derived list: drivers (aggregated from delivery_vehicles)
-app.get('/api/drivers', (req, res) => {
-  const aggregate = (rows) => {
-    const map = new Map();
-    for (const v of rows) {
-      const name = v.driverName || '未知司机';
-      const id = 'drv_' + Buffer.from(String(name)).toString('hex').slice(0, 8);
-      const plate = v.plateNumber || '';
-      if (!map.has(id)) {
-        map.set(id, { id, name, phone: '', plateNumbers: [], createdAt: v.createdAt || new Date().toISOString().split('T')[0] });
-      }
-      const entry = map.get(id);
-      if (plate && !entry.plateNumbers.includes(plate)) entry.plateNumbers.push(plate);
-    }
-    return Array.from(map.values());
-  };
-  if (db) {
-    const rows = db.prepare('SELECT plateNumber, driverName, createdAt FROM delivery_vehicles').all();
-    return res.json(aggregate(rows));
-  }
-  const rows = store.delivery_vehicles || [];
-  res.json(aggregate(rows));
-});
+// (old aggregated /api/drivers route replaced by CRUD with fallback above)
 
 // Derived list: shipments (from batches + vehicles)
 app.get('/api/shipments', (req, res) => {
