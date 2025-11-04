@@ -239,7 +239,7 @@ const Reconciliation: React.FC = () => {
     }
   ];
 
-  // 供应商欠款表格列
+  // 供应商应付表格列
   const supplierColumns = [
     {
       title: '供应商名称',
@@ -259,7 +259,7 @@ const Reconciliation: React.FC = () => {
       render: (amount: number) => `¥${amount.toLocaleString()}`
     },
     {
-      title: '欠款金额',
+      title: '应付金额',
       dataIndex: 'remainingAmount',
       key: 'remainingAmount',
       render: (amount: number) => (
@@ -439,12 +439,45 @@ const Reconciliation: React.FC = () => {
             />
           </TabPane>
 
-          <TabPane tab={`供应商欠款 (${supplierDebts.length})`} key="suppliers">
+          <TabPane tab={`供应商应付 (${supplierDebts.length})`} key="suppliers">
             <Table
               columns={supplierColumns}
               dataSource={supplierDebts}
               rowKey="id"
               pagination={{ pageSize: 10 }}
+              expandable={{
+                expandedRowRender: (record) => {
+                  const supplierBatches = deliveryBatches.filter(b => b.supplierId === record.id);
+                  return (
+                    <Table
+                      columns={[
+                        { title: '批次编号', dataIndex: 'id', key: 'id' },
+                        { title: '客户', dataIndex: 'customerName', key: 'customerName' },
+                        { title: '发货日期', dataIndex: 'departureDate', key: 'departureDate' },
+                        { title: '总重量', dataIndex: 'totalWeight', key: 'totalWeight', render: (w: number) => `${w}吨` },
+                        { title: '总金额', dataIndex: 'totalAmount', key: 'totalAmount', render: (a: number) => `¥${a.toLocaleString()}` },
+                        { title: '已付金额', dataIndex: 'paidAmount', key: 'paidAmount', render: (a: number) => `¥${a.toLocaleString()}` },
+                        { title: '应付金额', dataIndex: 'remainingAmount', key: 'remainingAmount', render: (a: number) => (
+                          <span style={{ color: a > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 'bold' }}>¥{a.toLocaleString()}</span>
+                        ) },
+                        { title: '状态', dataIndex: 'status', key: 'status', render: (status: string) => {
+                          const statusMap = {
+                            pending: { color: 'orange', text: '待付款' },
+                            partial_paid: { color: 'blue', text: '部分付款' },
+                            fully_paid: { color: 'green', text: '已付清' }
+                          } as const;
+                          const config = statusMap[status as keyof typeof statusMap] || { color: 'default', text: status };
+                          return <Tag color={config.color}>{config.text}</Tag>;
+                        } }
+                      ]}
+                      dataSource={supplierBatches}
+                      rowKey="id"
+                      pagination={false}
+                      size="small"
+                    />
+                  );
+                }
+              }}
               summary={(pageData) => {
                 const totalDebt = pageData.reduce((sum, record) => sum + record.remainingAmount, 0);
                 return (
@@ -489,101 +522,7 @@ const Reconciliation: React.FC = () => {
             />
           </TabPane>
 
-          <TabPane tab={`发货批次 (${deliveryBatches.length})`} key="batches">
-            <Table
-              columns={[
-                {
-                  title: '批次编号',
-                  dataIndex: 'id',
-                  key: 'id',
-                },
-                {
-                  title: '客户',
-                  dataIndex: 'customerName',
-                  key: 'customerName',
-                },
-                {
-                  title: '供应商',
-                  dataIndex: 'supplierName',
-                  key: 'supplierName',
-                },
-                {
-                  title: '发货日期',
-                  dataIndex: 'departureDate',
-                  key: 'departureDate',
-                },
-                {
-                  title: '总重量',
-                  dataIndex: 'totalWeight',
-                  key: 'totalWeight',
-                  render: (weight: number) => `${weight}吨`
-                },
-                {
-                  title: '总金额',
-                  dataIndex: 'totalAmount',
-                  key: 'totalAmount',
-                  render: (amount: number) => `¥${amount.toLocaleString()}`
-                },
-                {
-                  title: '已付金额',
-                  dataIndex: 'paidAmount',
-                  key: 'paidAmount',
-                  render: (amount: number) => `¥${amount.toLocaleString()}`
-                },
-                {
-                  title: '欠款金额',
-                  dataIndex: 'remainingAmount',
-                  key: 'remainingAmount',
-                  render: (amount: number) => (
-                    <span style={{ color: amount > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 'bold' }}>
-                      ¥{amount.toLocaleString()}
-                    </span>
-                  )
-                },
-                {
-                  title: '状态',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status: string) => {
-                    const statusMap = {
-                      'pending': { color: 'orange', text: '待付款' },
-                      'partial_paid': { color: 'blue', text: '部分付款' },
-                      'fully_paid': { color: 'green', text: '已付清' }
-                    };
-                    const config = statusMap[status as keyof typeof statusMap] || { color: 'default', text: status };
-                    return <Tag color={config.color}>{config.text}</Tag>;
-                  }
-                }
-              ]}
-              dataSource={deliveryBatches}
-              rowKey="id"
-              pagination={{ pageSize: 10 }}
-              summary={(pageData) => {
-                const totalAmount = pageData.reduce((sum, record) => sum + record.totalAmount, 0);
-                const totalPaid = pageData.reduce((sum, record) => sum + record.paidAmount, 0);
-                const totalRemaining = pageData.reduce((sum, record) => sum + record.remainingAmount, 0);
-                return (
-                  <Table.Summary.Row>
-                    <Table.Summary.Cell index={0} colSpan={5}>
-                      <strong>合计</strong>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={5}>
-                      <strong>¥{totalAmount.toLocaleString()}</strong>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={6}>
-                      <strong>¥{totalPaid.toLocaleString()}</strong>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={7}>
-                      <strong style={{ color: '#ff4d4f' }}>
-                        ¥{totalRemaining.toLocaleString()}
-                      </strong>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={8} />
-                  </Table.Summary.Row>
-                );
-              }}
-            />
-          </TabPane>
+          {/* 发货批次已并入供应商应付的子列表，移除独立页签 */}
         </Tabs>
       </Card>
     </div>

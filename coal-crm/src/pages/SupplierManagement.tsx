@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Table, 
   Button, 
@@ -12,38 +12,31 @@ import {
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { Supplier } from '../types';
+import { suppliersService } from '../services/suppliers';
 
 const SupplierManagement: React.FC = () => {
-  const [suppliers, setSuppliers] = useState<Supplier[]>([
-    {
-      id: '1',
-      name: '山西煤业集团',
-      contact: '赵经理',
-      phone: '13900139001',
-      address: '山西省太原市煤炭工业园区1号',
-      createdAt: '2024-01-01'
-    },
-    {
-      id: '2',
-      name: '内蒙古能源公司',
-      contact: '孙总',
-      phone: '13900139002',
-      address: '内蒙古鄂尔多斯市能源基地2号',
-      createdAt: '2024-01-02'
-    },
-    {
-      id: '3',
-      name: '陕西煤炭集团',
-      contact: '周主任',
-      phone: '13900139003',
-      address: '陕西省榆林市煤炭园区3号',
-      createdAt: '2024-01-03'
-    }
-  ]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const list = await suppliersService.list();
+        setSuppliers(list);
+      } catch (err) {
+        console.error(err);
+        message.error('加载供货方列表失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
 
   const columns = [
     {
@@ -111,9 +104,15 @@ const SupplierManagement: React.FC = () => {
     setIsModalVisible(true);
   };
 
-  const handleDelete = (id: string) => {
-    setSuppliers(suppliers.filter(supplier => supplier.id !== id));
-    message.success('供货方删除成功');
+  const handleDelete = async (id: string) => {
+    try {
+      await suppliersService.remove(id);
+      setSuppliers(suppliers.filter(supplier => supplier.id !== id));
+      message.success('供货方删除成功');
+    } catch (err) {
+      console.error(err);
+      message.error('删除供货方失败');
+    }
   };
 
   const handleSubmit = async () => {
@@ -121,21 +120,18 @@ const SupplierManagement: React.FC = () => {
       const values = await form.validateFields();
       
       if (editingSupplier) {
-        // 编辑供货方
+        // 编辑供货方（后端）
+        const updated = await suppliersService.update(editingSupplier.id, values);
         setSuppliers(suppliers.map(supplier => 
           supplier.id === editingSupplier.id 
-            ? { ...supplier, ...values }
+            ? updated
             : supplier
         ));
         message.success('供货方信息更新成功');
       } else {
-        // 新增供货方
-        const newSupplier: Supplier = {
-          id: Date.now().toString(),
-          ...values,
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-        setSuppliers([...suppliers, newSupplier]);
+        // 新增供货方（后端）
+        const created = await suppliersService.create(values);
+        setSuppliers([...suppliers, created]);
         message.success('供货方添加成功');
       }
       
@@ -170,6 +166,7 @@ const SupplierManagement: React.FC = () => {
           columns={columns} 
           dataSource={suppliers}
           rowKey="id"
+          loading={loading}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -212,8 +209,14 @@ const SupplierManagement: React.FC = () => {
             name="phone"
             label="联系电话"
             rules={[
-              { required: true, message: '请输入联系电话' },
-              { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码' }
+              {
+                validator: (_: any, value: string) => {
+                  if (!value) return Promise.resolve();
+                  return /^1[3-9]\d{9}$/.test(value)
+                    ? Promise.resolve()
+                    : Promise.reject('请输入正确的手机号码');
+                }
+              }
             ]}
           >
             <Input placeholder="请输入联系电话" />

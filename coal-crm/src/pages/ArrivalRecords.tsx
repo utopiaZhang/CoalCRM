@@ -20,8 +20,12 @@ import {
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { ArrivalRecord, Customer, Shipment } from '../types';
-import { dataStore, ExtendedFreightPayment } from '../services/dataStore';
+import { ArrivalRecord, Customer, Shipment, CustomerPayment } from '../types';
+import { ExtendedFreightPayment } from '../services/dataStore';
+import { paymentsService } from '../services/payments';
+import { customersService } from '../services/customers';
+import { shipmentsService } from '../services/shipments';
+import { arrivalRecordsService } from '../services/arrivalRecords';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -39,130 +43,41 @@ const ArrivalRecords: React.FC = () => {
   const [isReceivablePaymentVisible, setIsReceivablePaymentVisible] = useState(false);
   const [freightPayments, setFreightPayments] = useState<ExtendedFreightPayment[]>([]);
   const [currentArrivalRecordId, setCurrentArrivalRecordId] = useState<string | null>(null);
+  const [isViewVisible, setIsViewVisible] = useState(false);
+  const [viewRecord, setViewRecord] = useState<ArrivalRecord | null>(null);
+  const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([]);
   const [form] = Form.useForm();
   const [freightPaymentForm] = Form.useForm();
   const [receivablePaymentForm] = Form.useForm();
 
-  // 监听全局数据变化
+  // 初始化从后端加载运费支付记录
   useEffect(() => {
-    const updateFreightPayments = () => {
-      setFreightPayments(dataStore.getFreightPayments());
-    };
-    
-    // 初始化数据
-    updateFreightPayments();
-    
-    // 添加监听器
-    dataStore.addListener(updateFreightPayments);
-    
-    // 清理监听器
-    return () => {
-      dataStore.removeListener(updateFreightPayments);
-    };
+    paymentsService.listFreight()
+      .then(setFreightPayments)
+      .catch(err => {
+        console.error(err);
+        message.error('加载运费支付记录失败');
+      });
   }, []);
 
-  // 模拟数据初始化
+  // 初始化从后端加载客户、可用车单与到货记录
   useEffect(() => {
-    // 模拟客户数据
-    const mockCustomers: Customer[] = [
-      { id: '1', name: '华能电厂', contact: '张经理', phone: '13800138001', address: '北京市朝阳区', createdAt: '2024-01-01' },
-      { id: '2', name: '大唐电厂', contact: '李经理', phone: '13800138002', address: '天津市河西区', createdAt: '2024-01-02' },
-    ];
-
-    // 模拟可用车单数据（已发货但未到货的车单）
-    const mockShipments: Shipment[] = [
-      {
-        id: 'ship1',
-        batchId: 'batch1',
-        vehicleId: 'vehicle1',
-        plateNumber: '京A12345',
-        driverName: '王师傅',
-        driverId: 'driver1',
-        customerId: '1',
-        customerName: '华能电厂',
-        supplierId: 'supplier1',
-        supplierName: '山西煤业',
-        coalPrice: 800,
-        freightPrice: 120,
-        weight: 35,
-        coalAmount: 28000,
-        freightAmount: 4200,
-        departureDate: '2024-11-01',
-        status: 'shipping',
-        createdAt: '2024-11-01'
-      },
-      {
-        id: 'ship2',
-        batchId: 'batch1',
-        vehicleId: 'vehicle2',
-        plateNumber: '京B67890',
-        driverName: '李师傅',
-        driverId: 'driver2',
-        customerId: '1',
-        customerName: '华能电厂',
-        supplierId: 'supplier1',
-        supplierName: '山西煤业',
-        coalPrice: 800,
-        freightPrice: 120,
-        weight: 40,
-        coalAmount: 32000,
-        freightAmount: 4800,
-        departureDate: '2024-11-01',
-        status: 'shipping',
-        createdAt: '2024-11-01'
+    const loadData = async () => {
+      try {
+        const [customerList, shipmentList, arrivalList] = await Promise.all([
+          customersService.list(),
+          shipmentsService.list(),
+          arrivalRecordsService.list()
+        ]);
+        setCustomers(customerList);
+        setAvailableShipments((shipmentList || []).filter(s => s.status === 'shipping'));
+        setArrivalRecords(arrivalList || []);
+      } catch (err) {
+        console.error(err);
+        message.error('加载到货记录相关数据失败');
       }
-    ];
-
-    setCustomers(mockCustomers);
-    setAvailableShipments(mockShipments);
-
-    // 模拟到货记录数据
-    const mockArrivalRecords: ArrivalRecord[] = [
-      {
-        id: 'arrival1',
-        arrivalDate: '2024-11-15',
-        customerId: '1',
-        customerName: '华能电厂',
-        freightPerTon: 120,
-        sellingPricePerTon: 800,
-        totalWeight: 70,
-        totalLoss: 2.5,
-        totalReceivable: 56000,
-        actualFreightPaid: 8000,
-        freightPaymentStatus: 'partial',
-        actualReceived: 30000,
-        receivablePaymentStatus: 'partial',
-        status: 'completed',
-        remark: '第一批到货',
-        relatedShipments: [
-          {
-            id: 'arrival_ship1',
-            arrivalRecordId: 'arrival1',
-            shipmentId: 'ship1',
-            plateNumber: '京A12345',
-            driverName: '王师傅',
-            originalWeight: 35,
-            arrivalWeight: 34,
-            loss: 1,
-            receivableAmount: 27200 // 34 * 800
-          },
-          {
-            id: 'arrival_ship2',
-            arrivalRecordId: 'arrival1',
-            shipmentId: 'ship2',
-            plateNumber: '京B67890',
-            driverName: '李师傅',
-            originalWeight: 40,
-            arrivalWeight: 38.5,
-            loss: 1.5,
-            receivableAmount: 30800 // 38.5 * 800
-          }
-        ],
-        createdAt: '2024-11-15'
-      }
-    ];
-
-    setArrivalRecords(mockArrivalRecords);
+    };
+    loadData();
   }, []);
 
   // 表格列定义
@@ -343,14 +258,29 @@ const ArrivalRecords: React.FC = () => {
 
   // 处理查看
   const handleView = (record: ArrivalRecord) => {
-    // 这里可以实现查看详情的逻辑
-    message.info('查看功能待实现');
+    setViewRecord(record);
+    setIsViewVisible(true);
+    paymentsService.listCustomer()
+      .then(list => {
+        setCustomerPayments(list.filter(p => p.arrivalRecordId === record.id));
+      })
+      .catch(err => {
+        console.error(err);
+        message.error('加载客户收款记录失败');
+      });
   };
 
   // 处理删除
   const handleDelete = (id: string) => {
-    setArrivalRecords(prev => prev.filter(record => record.id !== id));
-    message.success('删除成功');
+    arrivalRecordsService.remove(id)
+      .then(() => {
+        setArrivalRecords(prev => prev.filter(record => record.id !== id));
+        message.success('到货记录已删除');
+      })
+      .catch(err => {
+        console.error(err);
+        message.error('删除到货记录失败');
+      });
   };
 
   // 处理运费支付
@@ -456,8 +386,62 @@ const ArrivalRecords: React.FC = () => {
   const handleSubmit = async () => {
     try {
       await form.validateFields();
-      // 这里将来会调用API保存数据
-      message.success('到货记录保存成功！');
+
+      const values = form.getFieldsValue();
+      const arrivalDate: string = values.arrivalDate ? values.arrivalDate.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+      const freightPerTon: number = values.freightPerTon || 0;
+      const sellingPricePerTon: number = values.sellingPricePerTon || 0;
+      const customerId: string = values.customerId || '';
+      const customerName: string = customers.find(c => c.id === customerId)?.name || '';
+      const remark: string = values.remark || '';
+
+      const selectedShipmentData = availableShipments.filter(s => selectedShipments.includes(s.id));
+      const relatedShipments = selectedShipmentData.map((s, idx) => {
+        const arrivalWeight = arrivalWeights[s.id] ?? s.weight;
+        const loss = s.weight - arrivalWeight;
+        const receivableAmount = arrivalWeight * sellingPricePerTon;
+        return {
+          id: `as${Date.now()}_${idx}`,
+          arrivalRecordId: editingRecord?.id || 'pending',
+          shipmentId: s.id,
+          plateNumber: s.plateNumber,
+          driverName: s.driverName,
+          originalWeight: s.weight,
+          arrivalWeight,
+          loss,
+          receivableAmount
+        };
+      });
+
+      const { totalArrivalWeight, totalLoss, totalFreightPayable, totalReceivable } = calculateTotals();
+
+      const payload = {
+        arrivalDate,
+        customerId,
+        customerName,
+        sellingPricePerTon,
+        freightPerTon,
+        totalWeight: totalArrivalWeight,
+        totalLoss,
+        totalReceivable,
+        actualFreightPaid: editingRecord?.actualFreightPaid || 0,
+        freightPaymentStatus: editingRecord?.freightPaymentStatus || 'unpaid',
+        actualReceived: editingRecord?.actualReceived || 0,
+        receivablePaymentStatus: editingRecord?.receivablePaymentStatus || 'unpaid',
+        status: editingRecord?.status || 'pending',
+        remark,
+        relatedShipments
+      };
+
+      if (editingRecord) {
+        const updated = await arrivalRecordsService.update(editingRecord.id, payload);
+        setArrivalRecords(prev => prev.map(r => r.id === editingRecord.id ? updated : r));
+      } else {
+        const created = await arrivalRecordsService.create(payload);
+        setArrivalRecords(prev => [created, ...prev]);
+      }
+
+      message.success('到货记录已保存到后端');
       setIsModalVisible(false);
       form.resetFields();
       setSelectedShipments([]);
@@ -816,10 +800,24 @@ const ArrivalRecords: React.FC = () => {
                   createdAt: new Date().toISOString()
                 };
                 
-                // 同步到全局数据存储
-                dataStore.addFreightPayment(newPayment);
-                freightPaymentForm.resetFields();
-                message.success('支付记录添加成功并已同步到付款管理');
+                // 保存到后端
+                paymentsService.createFreight({
+                  driverId: newPayment.driverId,
+                  driverName: newPayment.driverName,
+                  plateNumbers: newPayment.plateNumbers || [],
+                  calculatedAmount: newPayment.calculatedAmount,
+                  actualAmount: newPayment.actualAmount,
+                  paymentDate: newPayment.paymentDate,
+                  remark: newPayment.remark,
+                  arrivalRecordId: newPayment.arrivalRecordId
+                }).then(created => {
+                  setFreightPayments(prev => [...prev, created]);
+                  freightPaymentForm.resetFields();
+                  message.success('支付记录添加成功并已同步到付款管理');
+                }).catch(err => {
+                  console.error(err);
+                  message.error('保存支付记录失败');
+                });
               }}
             >
               <Row gutter={16}>
@@ -920,9 +918,22 @@ const ArrivalRecords: React.FC = () => {
                             createdAt: new Date().toISOString()
                           };
                           
-                          // 同步到全局数据存储
-                          dataStore.addFreightPayment(balancePayment);
-                          message.success('平账结算完成，已同步到付款管理');
+                          paymentsService.createFreight({
+                            driverId: balancePayment.driverId,
+                            driverName: balancePayment.driverName,
+                            plateNumbers: balancePayment.plateNumbers || [],
+                            calculatedAmount: balancePayment.calculatedAmount,
+                            actualAmount: balancePayment.actualAmount,
+                            paymentDate: balancePayment.paymentDate,
+                            remark: balancePayment.remark,
+                            arrivalRecordId: balancePayment.arrivalRecordId
+                          }).then(created => {
+                            setFreightPayments(prev => [...prev, created]);
+                            message.success('平账结算完成，已同步到付款管理');
+                          }).catch(err => {
+                            console.error(err);
+                            message.error('平账结算保存失败');
+                          });
                         }
                       });
                     }}
@@ -942,30 +953,17 @@ const ArrivalRecords: React.FC = () => {
               pagination={false}
               columns={[
                 {
-                  title: '支付金额',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                  render: (amount) => `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`
+                  title: '实付金额',
+                  dataIndex: 'actualAmount',
+                  key: 'actualAmount',
+                  render: (amount: number) => `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`
                 },
                 {
                   title: '支付日期',
                   dataIndex: 'paymentDate',
                   key: 'paymentDate'
                 },
-                {
-                  title: '支付方式',
-                  dataIndex: 'paymentMethod',
-                  key: 'paymentMethod',
-                  render: (method) => {
-                    const methodMap = {
-                      bank_card: '银行卡',
-                      wechat_direct: '微信直接转账',
-                      wechat_indirect: '微信间接转账',
-                      cash: '现金'
-                    };
-                    return methodMap[method as keyof typeof methodMap] || method;
-                  }
-                },
+                
                 {
                   title: '备注',
                   dataIndex: 'remark',
@@ -978,8 +976,15 @@ const ArrivalRecords: React.FC = () => {
                     <Popconfirm
                       title="确定要删除这条支付记录吗？"
                       onConfirm={() => {
-                        dataStore.removeFreightPayment(record.id);
-                        message.success('支付记录删除成功并已同步到付款管理');
+                        paymentsService.removeFreight(record.id)
+                          .then(() => {
+                            setFreightPayments(prev => prev.filter(p => p.id !== record.id));
+                            message.success('支付记录删除成功并已同步到付款管理');
+                          })
+                          .catch(err => {
+                            console.error(err);
+                            message.error('删除支付记录失败');
+                          });
                       }}
                       okText="确定"
                       cancelText="取消"
@@ -1037,31 +1042,48 @@ const ArrivalRecords: React.FC = () => {
         <Form
           form={receivablePaymentForm}
           layout="vertical"
-          onFinish={(values) => {
-            // 更新到货记录的收款信息
-            setArrivalRecords(prev => prev.map(record => {
-              if (record.id === currentArrivalRecordId) {
-                const actualReceived = values.actualReceived || 0;
-                const totalReceivable = record.totalReceivable;
-                let receivablePaymentStatus: 'unpaid' | 'partial' | 'paid' = 'unpaid';
-                
-                if (actualReceived >= totalReceivable) {
-                  receivablePaymentStatus = 'paid';
-                } else if (actualReceived > 0) {
-                  receivablePaymentStatus = 'partial';
-                }
-                
-                return {
-                  ...record,
-                  actualReceived,
-                  receivablePaymentStatus
-                };
+          onFinish={async (values) => {
+            try {
+              const record = arrivalRecords.find(r => r.id === currentArrivalRecordId);
+              if (!record) {
+                message.error('未找到当前到货记录');
+                return;
               }
-              return record;
-            }));
-            
-            setIsReceivablePaymentVisible(false);
-            message.success('收款记录已保存');
+              const actualReceived = Number(values.actualReceived || 0);
+              const totalReceivable = Number(record.totalReceivable || 0);
+              let receivablePaymentStatus: 'unpaid' | 'partial' | 'paid' = 'unpaid';
+              if (actualReceived >= totalReceivable) {
+                receivablePaymentStatus = 'paid';
+              } else if (actualReceived > 0) {
+                receivablePaymentStatus = 'partial';
+              }
+
+              const updated = await arrivalRecordsService.update(record.id, {
+                actualReceived,
+                receivablePaymentStatus
+              });
+              setArrivalRecords(prev => prev.map(r => r.id === record.id ? updated : r));
+
+              // 同步创建客户收款记录（付款管理页可见）
+              try {
+                await paymentsService.createCustomer({
+                  customerId: record.customerId,
+                  customerName: record.customerName,
+                  amount: actualReceived,
+                  paymentDate: values.receivedDate ? values.receivedDate.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
+                  remark: values.remark || '',
+                  arrivalRecordId: record.id
+                });
+              } catch (e) {
+                console.warn('客户收款记录创建失败，但到货收款已更新:', e);
+              }
+
+              setIsReceivablePaymentVisible(false);
+              message.success('收款记录已保存并同步到后端');
+            } catch (err) {
+              console.error(err);
+              message.error('保存收款记录失败');
+            }
           }}
         >
           <Card style={{ marginBottom: 16, backgroundColor: '#f6ffed', border: '1px solid #b7eb8f' }}>
@@ -1148,6 +1170,94 @@ const ArrivalRecords: React.FC = () => {
             </Space>
           </div>
         </Form>
+      </Modal>
+
+      {/* 查看详情弹窗（含关联客户收款明细）*/}
+      <Modal
+        title="到货记录详情"
+        open={isViewVisible}
+        onCancel={() => {
+          setIsViewVisible(false);
+          setViewRecord(null);
+          setCustomerPayments([]);
+        }}
+        width={900}
+        footer={null}
+      >
+        {viewRecord && (
+          <div>
+            <Card style={{ marginBottom: 16 }}>
+              <Row gutter={16}>
+                <Col span={8}><div>到货日期：{dayjs(viewRecord.arrivalDate).format('YYYY-MM-DD')}</div></Col>
+                <Col span={8}><div>客户：{viewRecord.customerName}</div></Col>
+                <Col span={8}><div>车辆数：{viewRecord.relatedShipments.length}</div></Col>
+              </Row>
+              <Row gutter={16} style={{ marginTop: 8 }}>
+                <Col span={8}><div>总重量：{viewRecord.totalWeight.toFixed(2)} 吨</div></Col>
+                <Col span={8}><div>总应收：¥{viewRecord.totalReceivable.toLocaleString()}</div></Col>
+                <Col span={8}><div>已收：¥{(viewRecord.actualReceived || 0).toLocaleString()}</div></Col>
+              </Row>
+              <Row gutter={16} style={{ marginTop: 8 }}>
+                <Col span={8}><div>运费单价：¥{viewRecord.freightPerTon.toFixed(2)}/吨</div></Col>
+                <Col span={8}><div>销售单价：¥{viewRecord.sellingPricePerTon.toFixed(2)}/吨</div></Col>
+                <Col span={8}><div>备注：{viewRecord.remark || '-'}</div></Col>
+              </Row>
+            </Card>
+
+            <Card title="关联车单明细表" style={{ marginBottom: 16 }}>
+              <Table
+                dataSource={viewRecord.relatedShipments}
+                rowKey={(r) => r.id || r.shipmentId}
+                pagination={false}
+                columns={[
+                  { title: '车牌号', dataIndex: 'plateNumber', key: 'plateNumber' },
+                  { title: '司机', dataIndex: 'driverName', key: 'driverName' },
+                  { title: '到货重量(吨)', dataIndex: 'arrivalWeight', key: 'arrivalWeight', render: (n: number) => Number(n || 0).toFixed(2) },
+                  { title: '运损(吨)', dataIndex: 'loss', key: 'loss', render: (n: number) => (
+                    <span style={{ color: (Number(n || 0) > 0) ? '#ff4d4f' : '#52c41a' }}>{Number(n || 0).toFixed(2)}</span>
+                  ) },
+                  { title: '应收金额(元)', dataIndex: 'receivableAmount', key: 'receivableAmount', render: (n: number) => `¥${Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` },
+                ]}
+                summary={(pageData) => {
+                  const totalArrival = pageData.reduce((sum, r) => sum + (Number(r.arrivalWeight) || 0), 0);
+                  const totalLoss = pageData.reduce((sum, r) => sum + (Number(r.loss) || 0), 0);
+                  const totalReceivable = pageData.reduce((sum, r) => sum + (Number(r.receivableAmount) || 0), 0);
+                  return (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={2}><strong>合计</strong></Table.Summary.Cell>
+                      <Table.Summary.Cell index={1}><strong>{totalArrival.toFixed(2)}</strong></Table.Summary.Cell>
+                      <Table.Summary.Cell index={2}><strong>{totalLoss.toFixed(2)}</strong></Table.Summary.Cell>
+                      <Table.Summary.Cell index={3}><strong>{`¥${totalReceivable.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`}</strong></Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  );
+                }}
+              />
+            </Card>
+
+            <Card title="关联客户收款明细" extra={<Tag color="blue">共 {customerPayments.length} 条</Tag>}>
+              <Table
+                dataSource={customerPayments}
+                rowKey="id"
+                pagination={false}
+                columns={[
+                  { title: '收款金额', dataIndex: 'amount', key: 'amount', render: (n: number) => `¥${Number(n).toFixed(2)}` },
+                  { title: '收款日期', dataIndex: 'paymentDate', key: 'paymentDate' },
+                  { title: '备注', dataIndex: 'remark', key: 'remark' },
+                ]}
+                summary={(pageData) => {
+                  const total = pageData.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+                  return (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0}><strong>总计</strong></Table.Summary.Cell>
+                      <Table.Summary.Cell index={1}><strong>{`¥${total.toFixed(2)}`}</strong></Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} colSpan={2} />
+                    </Table.Summary.Row>
+                  );
+                }}
+              />
+            </Card>
+          </div>
+        )}
       </Modal>
     </div>
   );

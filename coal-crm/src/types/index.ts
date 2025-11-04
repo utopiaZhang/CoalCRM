@@ -129,6 +129,7 @@ export interface CustomerPayment {
   paymentDate: string;
   remark?: string; // 备注，比如"4车半的钱"
   createdAt: string;
+  arrivalRecordId?: string;
 }
 
 // 对账统计数据

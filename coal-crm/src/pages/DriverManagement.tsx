@@ -209,8 +209,14 @@ const DriverManagement: React.FC = () => {
             name="phone"
             label="联系电话"
             rules={[
-              { required: true, message: '请输入联系电话' },
-              { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码' }
+              {
+                validator: (_: any, value: string) => {
+                  if (!value) return Promise.resolve();
+                  return /^1[3-9]\d{9}$/.test(value)
+                    ? Promise.resolve()
+                    : Promise.reject('请输入正确的手机号码');
+                }
+              }
             ]}
           >
             <Input placeholder="请输入联系电话" />

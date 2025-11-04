@@ -1,0 +1,33 @@
+{
+  "customers": [
+    {
+      "id": "c1762239722350",
+      "name": "曹明明",
+      "contact": "曹明明",
+      "phone": "",
+      "address": "待补充",
+      "createdAt": "2025-11-04"
+    }
+  ],
+  "suppliers": [
+    {
+      "id": "s1762240031990",
+      "name": "顾世华",
+      "contact": "顾世华",
+      "phone": "",
+      "address": "待补充",
+      "createdAt": "2025-11-04"
+    },
+    {
+      "id": "s1762240042736",
+      "name": "樊英春",
+      "contact": "樊英春",
+      "phone": "",
+      "address": "待补充",
+      "createdAt": "2025-11-04"
+    }
+  ],
+  "delivery_batches": [],
+  "delivery_vehicles": [],
+  "batch_payment_records": []
+}

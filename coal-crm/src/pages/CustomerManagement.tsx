@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Table, 
   Button, 
@@ -13,39 +13,32 @@ import {
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { Customer } from '../types';
+import { customersService } from '../services/customers';
 
 const CustomerManagement: React.FC = () => {
   const navigate = useNavigate();
-  const [customers, setCustomers] = useState<Customer[]>([
-    {
-      id: '1',
-      name: '北京钢铁厂',
-      contact: '张经理',
-      phone: '13800138001',
-      address: '北京市朝阳区工业园区1号',
-      createdAt: '2024-01-01'
-    },
-    {
-      id: '2',
-      name: '天津化工厂',
-      contact: '李总',
-      phone: '13800138002',
-      address: '天津市滨海新区化工园区2号',
-      createdAt: '2024-01-02'
-    },
-    {
-      id: '3',
-      name: '河北电厂',
-      contact: '王主任',
-      phone: '13800138003',
-      address: '河北省石家庄市电力园区3号',
-      createdAt: '2024-01-03'
-    }
-  ]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const list = await customersService.list();
+        setCustomers(list);
+      } catch (err) {
+        console.error(err);
+        message.error('加载客户列表失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
 
   const columns = [
     {
@@ -125,31 +118,34 @@ const CustomerManagement: React.FC = () => {
     setIsModalVisible(true);
   };
 
-  const handleDelete = (id: string) => {
-    setCustomers(customers.filter(customer => customer.id !== id));
-    message.success('客户删除成功');
+  const handleDelete = async (id: string) => {
+    try {
+      await customersService.remove(id);
+      setCustomers(customers.filter(customer => customer.id !== id));
+      message.success('客户删除成功');
+    } catch (err) {
+      console.error(err);
+      message.error('删除客户失败');
+    }
   };
 
-  const handleSubmit = async () => {
+const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
       
       if (editingCustomer) {
-        // 编辑客户
+        // 编辑客户（后端）
+        const updated = await customersService.update(editingCustomer.id, { ...values, phone: values.phone ?? '' });
         setCustomers(customers.map(customer => 
           customer.id === editingCustomer.id 
-            ? { ...customer, ...values }
+            ? updated
             : customer
         ));
         message.success('客户信息更新成功');
       } else {
-        // 新增客户
-        const newCustomer: Customer = {
-          id: Date.now().toString(),
-          ...values,
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-        setCustomers([...customers, newCustomer]);
+        // 新增客户（后端）
+        const created = await customersService.create({ ...values, phone: values.phone ?? '' });
+        setCustomers([...customers, created]);
         message.success('客户添加成功');
       }
       
@@ -184,6 +180,7 @@ const CustomerManagement: React.FC = () => {
           columns={columns} 
           dataSource={customers}
           rowKey="id"
+          loading={loading}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -226,11 +223,17 @@ const CustomerManagement: React.FC = () => {
             name="phone"
             label="联系电话"
             rules={[
-              { required: true, message: '请输入联系电话' },
-              { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码' }
+              {
+                validator: (_, value) => {
+                  if (!value) return Promise.resolve();
+                  return /^1[3-9]\d{9}$/.test(value)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('请输入正确的手机号码'));
+                }
+              }
             ]}
           >
-            <Input placeholder="请输入联系电话" />
+            <Input placeholder="可不填" />
           </Form.Item>
 
           <Form.Item

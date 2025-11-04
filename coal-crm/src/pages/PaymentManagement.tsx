@@ -15,8 +15,12 @@ import {
   Checkbox
 } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import { CargoPayment, CustomerPayment } from '../types';
-import { dataStore, ExtendedFreightPayment } from '../services/dataStore';
+import { CargoPayment, CustomerPayment, Shipment } from '../types';
+import { ExtendedFreightPayment } from '../services/dataStore';
+import { paymentsService } from '../services/payments';
+import { shipmentsService } from '../services/shipments';
+import { driversService, DriverSummary } from '../services/drivers';
+import { customersService } from '../services/customers';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -24,53 +28,33 @@ const { TextArea } = Input;
 
 const PaymentManagement: React.FC = () => {
   // 货款支付记录
-  const [cargoPayments, setCargoPayments] = useState<CargoPayment[]>([
-    {
-      id: '1',
-      shipmentId: '1',
-      customerId: '1',
-      customerName: '北京钢铁厂',
-      calculatedAmount: 28400,
-      actualAmount: 28000,
-      paymentDate: '2024-01-16',
-      remark: '取整支付',
-      createdAt: '2024-01-16'
-    }
-  ]);
+  const [cargoPayments, setCargoPayments] = useState<CargoPayment[]>([]);
 
   // 运费支付记录
   const [freightPayments, setFreightPayments] = useState<ExtendedFreightPayment[]>([]);
 
-  // 监听全局数据变化
+  // 加载三类支付记录
   useEffect(() => {
-    const updateFreightPayments = () => {
-      setFreightPayments(dataStore.getFreightPayments());
+    const load = async () => {
+      try {
+        const [cargoList, freightList, customerList] = await Promise.all([
+          paymentsService.listCargo(),
+          paymentsService.listFreight(),
+          paymentsService.listCustomer()
+        ]);
+        setCargoPayments(cargoList);
+        setFreightPayments(freightList);
+        setCustomerPayments(customerList);
+      } catch (err) {
+        console.error(err);
+        message.error('加载支付记录失败');
+      }
     };
-    
-    // 初始化数据
-    updateFreightPayments();
-    
-    // 添加监听器
-    dataStore.addListener(updateFreightPayments);
-    
-    // 清理监听器
-    return () => {
-      dataStore.removeListener(updateFreightPayments);
-    };
+    load();
   }, []);
 
   // 客户收款记录
-  const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([
-    {
-      id: '1',
-      customerId: '1',
-      customerName: '北京钢铁厂',
-      amount: 50000,
-      paymentDate: '2024-01-18',
-      remark: '预付款',
-      createdAt: '2024-01-18'
-    }
-  ]);
+  const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([]);
 
   const [isCargoModalVisible, setIsCargoModalVisible] = useState(false);
   const [isFreightModalVisible, setIsFreightModalVisible] = useState(false);
@@ -80,21 +64,29 @@ const PaymentManagement: React.FC = () => {
   const [freightForm] = Form.useForm();
   const [customerForm] = Form.useForm();
 
-  // 模拟数据
-  const shipments = [
-    { id: '1', customerName: '北京钢铁厂', totalAmount: 28400 },
-    { id: '2', customerName: '天津化工厂', totalAmount: 22500 }
-  ];
+  // 后端数据
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [drivers, setDrivers] = useState<DriverSummary[]>([]);
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
 
-  const drivers = [
-    { id: '1', name: '张师傅', plateNumbers: ['京A12345', '京A12346'] },
-    { id: '2', name: '李师傅', plateNumbers: ['京B67890'] }
-  ];
-
-  const customers = [
-    { id: '1', name: '北京钢铁厂' },
-    { id: '2', name: '天津化工厂' }
-  ];
+  useEffect(() => {
+    const loadBaseData = async () => {
+      try {
+        const [shipmentList, driverList, customerList] = await Promise.all([
+          shipmentsService.list(),
+          driversService.list(),
+          customersService.list()
+        ]);
+        setShipments(shipmentList);
+        setDrivers(driverList);
+        setCustomers(customerList.map(c => ({ id: c.id, name: c.name })));
+      } catch (err) {
+        console.error(err);
+        message.error('加载基础数据失败');
+      }
+    };
+    loadBaseData();
+  }, []);
 
   // 货款支付表格列
   const cargoColumns = [
@@ -194,6 +186,16 @@ const PaymentManagement: React.FC = () => {
       key: 'customerName',
     },
     {
+      title: '关联到货记录',
+      dataIndex: 'arrivalRecordId',
+      key: 'arrivalRecordId',
+      render: (arrivalRecordId: string) => arrivalRecordId ? (
+        <Tag color="green">到货记录 #{arrivalRecordId.slice(-6)}</Tag>
+      ) : (
+        <Tag color="gray">手动录入</Tag>
+      )
+    },
+    {
       title: '收款金额',
       dataIndex: 'amount',
       key: 'amount',
@@ -220,13 +222,23 @@ const PaymentManagement: React.FC = () => {
       const newPayment: CargoPayment = {
         id: Date.now().toString(),
         ...values,
+        customerId: selectedShipment?.customerId || '',
         customerName: selectedShipment?.customerName || '',
-        calculatedAmount: selectedShipment?.totalAmount || 0,
+        calculatedAmount: selectedShipment?.coalAmount || 0,
         paymentDate: values.paymentDate.format('YYYY-MM-DD'),
         createdAt: new Date().toISOString().split('T')[0]
       };
       
-      setCargoPayments([...cargoPayments, newPayment]);
+      const created = await paymentsService.createCargo({
+        shipmentId: newPayment.shipmentId,
+        customerId: newPayment.customerId,
+        customerName: newPayment.customerName,
+        calculatedAmount: newPayment.calculatedAmount,
+        actualAmount: newPayment.actualAmount,
+        paymentDate: newPayment.paymentDate,
+        remark: newPayment.remark
+      });
+      setCargoPayments([...cargoPayments, created]);
       message.success('货款支付记录添加成功');
       setIsCargoModalVisible(false);
       cargoForm.resetFields();
@@ -253,7 +265,16 @@ const PaymentManagement: React.FC = () => {
         createdAt: new Date().toISOString().split('T')[0]
       };
       
-      dataStore.addFreightPayment(newPayment);
+      const created = await paymentsService.createFreight({
+        driverId: newPayment.driverId,
+        driverName: newPayment.driverName,
+        plateNumbers: newPayment.plateNumbers || [],
+        calculatedAmount: newPayment.calculatedAmount,
+        actualAmount: newPayment.actualAmount,
+        paymentDate: newPayment.paymentDate,
+        remark: newPayment.remark
+      });
+      setFreightPayments([...freightPayments, created]);
       message.success('运费支付记录添加成功');
       setIsFreightModalVisible(false);
       freightForm.resetFields();
@@ -276,7 +297,14 @@ const PaymentManagement: React.FC = () => {
         createdAt: new Date().toISOString().split('T')[0]
       };
       
-      setCustomerPayments([...customerPayments, newPayment]);
+      const created = await paymentsService.createCustomer({
+        customerId: newPayment.customerId,
+        customerName: newPayment.customerName,
+        amount: newPayment.amount,
+        paymentDate: newPayment.paymentDate,
+        remark: newPayment.remark
+      });
+      setCustomerPayments([...customerPayments, created]);
       message.success('客户收款记录添加成功');
       setIsCustomerModalVisible(false);
       customerForm.resetFields();
@@ -363,7 +391,7 @@ const PaymentManagement: React.FC = () => {
             <Select placeholder="请选择车单">
               {shipments.map(shipment => (
                 <Option key={shipment.id} value={shipment.id}>
-                  CU{shipment.id.padStart(6, '0')} - {shipment.customerName} (¥{shipment.totalAmount})
+                  CU{String(shipment.id).padStart(6, '0')} - {shipment.customerName} (¥{shipment.coalAmount})
                 </Option>
               ))}
             </Select>
