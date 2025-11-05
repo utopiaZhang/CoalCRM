@@ -127,6 +127,30 @@ async function initStorage() {
           remark TEXT,
           createdAt TEXT
         );
+        -- 借贷记录
+        CREATE TABLE IF NOT EXISTS loans (
+          id TEXT PRIMARY KEY,
+          type TEXT,
+          counterparty TEXT,
+          counterpartyPhone TEXT,
+          amount REAL,
+          date TEXT,
+          dueDate TEXT,
+          description TEXT,
+          status TEXT,
+          createdAt TEXT,
+          updatedAt TEXT
+        );
+        -- 还款记录
+        CREATE TABLE IF NOT EXISTS repayments (
+          id TEXT PRIMARY KEY,
+          loanRecordId TEXT,
+          amount REAL,
+          date TEXT,
+          description TEXT,
+          createdAt TEXT,
+          FOREIGN KEY(loanRecordId) REFERENCES loans(id) ON DELETE CASCADE
+        );
         CREATE TABLE IF NOT EXISTS arrival_records (
           id TEXT PRIMARY KEY,
           arrivalDate TEXT,
@@ -179,6 +203,8 @@ async function initJsonStore() {
       cargo_payments: [],
       freight_payments: [],
       customer_payments: [],
+      loans: [],
+      repayments: [],
       arrival_records: []
     };
     fs.writeFileSync(storeFile, JSON.stringify(initial, null, 2));
@@ -545,6 +571,166 @@ app.post('/api/payments/customer', (req, res) => {
   } else {
     if (!store.customer_payments) store.customer_payments = [];
     store.customer_payments.push(payload);
+    saveStore();
+  }
+  res.status(201).json(payload);
+});
+
+// Loans: list with nested repayments and computed remainingAmount
+app.get('/api/loans', (req, res) => {
+  const toOutput = (rows, fetchRepayments) => {
+    return rows.map(l => {
+      const reps = fetchRepayments(l.id);
+      const remaining = Number(l.amount || 0) - reps.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+      return {
+        id: l.id,
+        type: l.type,
+        counterparty: l.counterparty,
+        counterpartyPhone: l.counterpartyPhone || '',
+        amount: Number(l.amount || 0),
+        date: l.date,
+        dueDate: l.dueDate || null,
+        description: l.description || '',
+        status: remaining <= 0 ? 'settled' : 'active',
+        repaymentRecords: reps,
+        remainingAmount: Math.max(0, remaining),
+        createdAt: l.createdAt,
+        updatedAt: l.updatedAt
+      };
+    }).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  };
+  if (db) {
+    const rows = db.prepare('SELECT * FROM loans ORDER BY createdAt DESC').all();
+    const repsStmt = db.prepare('SELECT * FROM repayments WHERE loanRecordId = ? ORDER BY createdAt ASC');
+    const fetchRepayments = (loanId) => repsStmt.all(loanId);
+    return res.json(toOutput(rows, fetchRepayments));
+  }
+  const rows = [...(store.loans || [])];
+  const fetchRepayments = (loanId) => (store.repayments || []).filter(r => r.loanRecordId === loanId);
+  res.json(toOutput(rows, fetchRepayments));
+});
+
+// Loans: create
+app.post('/api/loans', (req, res) => {
+  const id = `ln${Date.now()}`;
+  const {
+    type = 'borrow', counterparty = '', counterpartyPhone = '', amount = 0,
+    date = new Date().toISOString().split('T')[0], dueDate = null, description = ''
+  } = req.body || {};
+  const createdAt = new Date().toISOString().split('T')[0];
+  const updatedAt = createdAt;
+  const payload = { id, type, counterparty, counterpartyPhone, amount: Number(amount), date, dueDate, description, status: 'active', createdAt, updatedAt };
+  if (db) {
+    db.prepare(`INSERT INTO loans (id, type, counterparty, counterpartyPhone, amount, date, dueDate, description, status, createdAt, updatedAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, type, counterparty, counterpartyPhone, Number(amount), date, dueDate, description, 'active', createdAt, updatedAt);
+  } else {
+    if (!store.loans) store.loans = [];
+    store.loans.push(payload);
+    saveStore();
+  }
+  res.status(201).json({
+    ...payload,
+    repaymentRecords: [],
+    remainingAmount: Number(amount)
+  });
+});
+
+// Loans: update
+app.put('/api/loans/:id', (req, res) => {
+  const { id } = req.params;
+  if (db) {
+    const existing = db.prepare('SELECT * FROM loans WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const updated = {
+      type: req.body?.type ?? existing.type,
+      counterparty: req.body?.counterparty ?? existing.counterparty,
+      counterpartyPhone: req.body?.counterpartyPhone ?? existing.counterpartyPhone,
+      amount: Number(req.body?.amount ?? existing.amount),
+      date: req.body?.date ?? existing.date,
+      dueDate: req.body?.dueDate ?? existing.dueDate,
+      description: req.body?.description ?? existing.description,
+      status: req.body?.status ?? existing.status,
+      createdAt: existing.createdAt,
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+    db.prepare('UPDATE loans SET type = ?, counterparty = ?, counterpartyPhone = ?, amount = ?, date = ?, dueDate = ?, description = ?, status = ?, updatedAt = ? WHERE id = ?')
+      .run(updated.type, updated.counterparty, updated.counterpartyPhone, updated.amount, updated.date, updated.dueDate, updated.description, updated.status, updated.updatedAt, id);
+    const row = db.prepare('SELECT * FROM loans WHERE id = ?').get(id);
+    const reps = db.prepare('SELECT * FROM repayments WHERE loanRecordId = ? ORDER BY createdAt ASC').all(id);
+    const remaining = Number(row.amount || 0) - reps.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    return res.json({
+      ...row,
+      repaymentRecords: reps,
+      remainingAmount: Math.max(0, remaining)
+    });
+  }
+  const idx = (store.loans || []).findIndex(l => l.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  const existing = store.loans[idx];
+  const updated = {
+    ...existing,
+    type: req.body?.type ?? existing.type,
+    counterparty: req.body?.counterparty ?? existing.counterparty,
+    counterpartyPhone: req.body?.counterpartyPhone ?? existing.counterpartyPhone,
+    amount: Number(req.body?.amount ?? existing.amount),
+    date: req.body?.date ?? existing.date,
+    dueDate: req.body?.dueDate ?? existing.dueDate,
+    description: req.body?.description ?? existing.description,
+    status: req.body?.status ?? existing.status,
+    updatedAt: new Date().toISOString().split('T')[0]
+  };
+  store.loans[idx] = updated;
+  saveStore();
+  const reps = (store.repayments || []).filter(r => r.loanRecordId === id);
+  const remaining = Number(updated.amount || 0) - reps.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  res.json({
+    ...updated,
+    repaymentRecords: reps,
+    remainingAmount: Math.max(0, remaining)
+  });
+});
+
+// Loans: delete (cascade repayments)
+app.delete('/api/loans/:id', (req, res) => {
+  const { id } = req.params;
+  if (db) {
+    db.prepare('DELETE FROM repayments WHERE loanRecordId = ?').run(id);
+    const info = db.prepare('DELETE FROM loans WHERE id = ?').run(id);
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' });
+  } else {
+    const before = (store.loans || []).length;
+    store.loans = (store.loans || []).filter(l => l.id !== id);
+    store.repayments = (store.repayments || []).filter(r => r.loanRecordId !== id);
+    if (before === (store.loans || []).length) return res.status(404).json({ error: 'not found' });
+    saveStore();
+  }
+  res.status(204).send();
+});
+
+// Repayments: add to a loan
+app.post('/api/loans/:id/repayments', (req, res) => {
+  const { id } = req.params;
+  const loanId = id;
+  const existing = db
+    ? db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId)
+    : (store.loans || []).find(l => l.id === loanId);
+  if (!existing) return res.status(404).json({ error: 'loan not found' });
+  const rid = `rp${Date.now()}`;
+  const {
+    amount = 0,
+    date = new Date().toISOString().split('T')[0],
+    description = ''
+  } = req.body || {};
+  const createdAt = new Date().toISOString().split('T')[0];
+  const payload = { id: rid, loanRecordId: loanId, amount: Number(amount), date, description, createdAt };
+  if (db) {
+    db.prepare(`INSERT INTO repayments (id, loanRecordId, amount, date, description, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(rid, loanId, Number(amount), date, description, createdAt);
+  } else {
+    if (!store.repayments) store.repayments = [];
+    store.repayments.push(payload);
     saveStore();
   }
   res.status(201).json(payload);

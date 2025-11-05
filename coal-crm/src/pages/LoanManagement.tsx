@@ -34,6 +34,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { LoanRecord, RepaymentRecord, DebtSummary, BatchRepaymentRecord, RepaymentAllocation, PersonLoanSummary } from '../types';
+import { loansService, CreateLoanPayload } from '../services/loans';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -59,74 +60,18 @@ const LoanManagement: React.FC = () => {
     othersDebts: { totalAmount: 0, records: [] }
   });
 
-  // 初始化模拟数据
+  // 加载后端借贷记录
   useEffect(() => {
-    const mockLoanRecords: LoanRecord[] = [
-      {
-        id: '1',
-        type: 'borrow',
-        counterparty: '张三',
-        counterpartyPhone: '13800138001',
-        amount: 50000,
-        date: '2024-01-15',
-        dueDate: '2024-02-15',
-        description: '临时资金周转',
-        status: 'active',
-        repaymentRecords: [
-          {
-            id: 'r1',
-            loanRecordId: '1',
-            amount: 20000,
-            date: '2024-01-25',
-            description: '部分还款',
-            createdAt: '2024-01-25T10:00:00Z'
-          }
-        ],
-        remainingAmount: 30000,
-        createdAt: '2024-01-15T09:00:00Z',
-        updatedAt: '2024-01-25T10:00:00Z'
-      },
-      {
-        id: '2',
-        type: 'lend',
-        counterparty: '李四',
-        counterpartyPhone: '13900139002',
-        amount: 80000,
-        date: '2024-01-20',
-        dueDate: '2024-03-20',
-        description: '朋友急用',
-        status: 'active',
-        repaymentRecords: [],
-        remainingAmount: 80000,
-        createdAt: '2024-01-20T14:00:00Z',
-        updatedAt: '2024-01-20T14:00:00Z'
-      },
-      {
-        id: '3',
-        type: 'borrow',
-        counterparty: '王五',
-        counterpartyPhone: '13700137003',
-        amount: 30000,
-        date: '2024-01-10',
-        description: '设备采购资金',
-        status: 'settled',
-        repaymentRecords: [
-          {
-            id: 'r2',
-            loanRecordId: '3',
-            amount: 30000,
-            date: '2024-01-30',
-            description: '全额还款',
-            createdAt: '2024-01-30T16:00:00Z'
-          }
-        ],
-        remainingAmount: 0,
-        createdAt: '2024-01-10T11:00:00Z',
-        updatedAt: '2024-01-30T16:00:00Z'
+    const load = async () => {
+      try {
+        const rows = await loansService.list();
+        setLoanRecords(rows);
+      } catch (e) {
+        console.error('加载借贷记录失败:', e);
+        message.error('加载借贷记录失败');
       }
-    ];
-    
-    setLoanRecords(mockLoanRecords);
+    };
+    load();
   }, []);
 
   // 计算债务汇总
@@ -219,9 +164,16 @@ const LoanManagement: React.FC = () => {
   };
 
   // 处理删除
-  const handleDelete = (id: string) => {
-    setLoanRecords(prev => prev.filter(record => record.id !== id));
-    message.success('删除成功');
+  const handleDelete = async (id: string) => {
+    try {
+      await loansService.remove(id);
+      const rows = await loansService.list();
+      setLoanRecords(rows);
+      message.success('删除成功');
+    } catch (e) {
+      console.error('删除失败:', e);
+      message.error('删除失败');
+    }
   };
 
   // 处理还款
@@ -238,43 +190,29 @@ const LoanManagement: React.FC = () => {
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
-      const now = new Date().toISOString();
-      
+      const payload: CreateLoanPayload = {
+        type: values.type,
+        counterparty: values.counterparty,
+        counterpartyPhone: values.counterpartyPhone,
+        amount: Number(values.amount),
+        date: values.date.format('YYYY-MM-DD'),
+        dueDate: values.dueDate ? values.dueDate.format('YYYY-MM-DD') : null,
+        description: values.description
+      };
+
       if (editingRecord) {
-        // 编辑
-        setLoanRecords(prev => prev.map(record => {
-          if (record.id === editingRecord.id) {
-            return {
-              ...record,
-              ...values,
-              date: values.date.format('YYYY-MM-DD'),
-              dueDate: values.dueDate ? values.dueDate.format('YYYY-MM-DD') : undefined,
-              updatedAt: now
-            };
-          }
-          return record;
-        }));
+        await loansService.update(editingRecord.id, payload);
         message.success('修改成功');
       } else {
-        // 新增
-        const newRecord: LoanRecord = {
-          id: Date.now().toString(),
-          ...values,
-          date: values.date.format('YYYY-MM-DD'),
-          dueDate: values.dueDate ? values.dueDate.format('YYYY-MM-DD') : undefined,
-          status: 'active',
-          repaymentRecords: [],
-          remainingAmount: values.amount,
-          createdAt: now,
-          updatedAt: now
-        };
-        setLoanRecords(prev => [...prev, newRecord]);
+        await loansService.create(payload);
         message.success('添加成功');
       }
-      
+      const rows = await loansService.list();
+      setLoanRecords(rows);
       setIsModalVisible(false);
     } catch (error) {
       console.error('保存失败:', error);
+      message.error('保存失败');
     }
   };
 
@@ -282,38 +220,18 @@ const LoanManagement: React.FC = () => {
   const handleRepaymentSave = async () => {
     try {
       const values = await repaymentForm.validateFields();
-      const now = new Date().toISOString();
-      
-      const newRepayment: RepaymentRecord = {
-        id: Date.now().toString(),
-        loanRecordId: currentLoanId,
-        amount: values.amount,
+      await loansService.addRepayment(currentLoanId, {
+        amount: Number(values.amount),
         date: values.date.format('YYYY-MM-DD'),
-        description: values.description,
-        createdAt: now
-      };
-      
-      setLoanRecords(prev => prev.map(record => {
-        if (record.id === currentLoanId) {
-          const newRepaymentRecords = [...record.repaymentRecords, newRepayment];
-          const newRemainingAmount = record.remainingAmount - values.amount;
-          const newStatus = newRemainingAmount <= 0 ? 'settled' : 'active';
-          
-          return {
-            ...record,
-            repaymentRecords: newRepaymentRecords,
-            remainingAmount: Math.max(0, newRemainingAmount),
-            status: newStatus,
-            updatedAt: now
-          };
-        }
-        return record;
-      }));
-      
+        description: values.description
+      });
+      const rows = await loansService.list();
+      setLoanRecords(rows);
       message.success('还款记录添加成功');
       setIsRepaymentModalVisible(false);
     } catch (error) {
       console.error('还款记录保存失败:', error);
+      message.error('保存失败');
     }
   };
 
@@ -328,70 +246,27 @@ const LoanManagement: React.FC = () => {
   const handleBatchRepaymentSave = async () => {
     try {
       const values = await batchRepaymentForm.validateFields();
-      const now = new Date().toISOString();
-      
       const { totalAmount, date, description, allocations } = values;
-      
-      // 验证分配金额总和
-      const totalAllocated = allocations.reduce((sum: number, allocation: any) => sum + allocation.amount, 0);
-      if (totalAllocated > totalAmount) {
+      const totalAllocated = allocations.reduce((sum: number, allocation: any) => sum + Number(allocation.amount), 0);
+      if (totalAllocated > Number(totalAmount)) {
         message.error('分配金额总和不能超过还款总额');
         return;
       }
-      
-      // 创建批量还款记录
-      const batchRepayment: BatchRepaymentRecord = {
-        id: Date.now().toString(),
-        totalAmount,
-        date: date.format('YYYY-MM-DD'),
-        counterparty: currentCounterparty,
-        description,
-        allocations: allocations.map((allocation: any) => {
-          const loanRecord = loanRecords.find(r => r.id === allocation.loanId);
-          return {
-            loanRecordId: allocation.loanId,
-            loanDescription: loanRecord ? `${loanRecord.amount}元 - ${loanRecord.description || '无描述'}` : '',
-            allocatedAmount: allocation.amount
-          };
-        }),
-        createdAt: now
-      };
-      
-      // 更新借款记录
-      setLoanRecords(prev => prev.map(record => {
-        const allocation = allocations.find((a: any) => a.loanId === record.id);
-        if (allocation) {
-          const newRemainingAmount = record.remainingAmount - allocation.amount;
-          const newStatus = newRemainingAmount <= 0 ? 'settled' : 'active';
-          
-          // 创建对应的还款记录
-          const newRepayment: RepaymentRecord = {
-            id: `${Date.now()}-${record.id}`,
-            loanRecordId: record.id,
-            amount: allocation.amount,
-            date: date.format('YYYY-MM-DD'),
-            description: `批量还款 - ${description || ''}`,
-            createdAt: now
-          };
-          
-          return {
-            ...record,
-            repaymentRecords: [...record.repaymentRecords, newRepayment],
-            remainingAmount: Math.max(0, newRemainingAmount),
-            status: newStatus,
-            updatedAt: now
-          };
-        }
-        return record;
-      }));
-      
-      // 保存批量还款记录
-      setBatchRepaymentRecords(prev => [...prev, batchRepayment]);
-      
+      // 逐条调用后端增加还款记录
+      for (const a of allocations) {
+        await loansService.addRepayment(a.loanId, {
+          amount: Number(a.amount),
+          date: date.format('YYYY-MM-DD'),
+          description: `批量还款 - ${description || ''}`
+        });
+      }
+      const rows = await loansService.list();
+      setLoanRecords(rows);
       message.success('批量还款记录添加成功');
       setIsBatchRepaymentModalVisible(false);
     } catch (error) {
       console.error('批量还款记录保存失败:', error);
+      message.error('保存失败');
     }
   };
 
